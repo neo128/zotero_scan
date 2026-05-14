@@ -125,6 +125,8 @@ python download_pdfs.py --config config.yaml --retry-failed
 python download_pdfs.py --config config.yaml --keys KEY1,KEY2
 ```
 
+下载阶段默认是幂等的：如果 `data/pdfs/{key}.pdf` 已存在且通过 PDF 头校验，就不会再次下载；只有显式加 `--force` 才会覆盖重下。
+
 失败不会中断整个流程，失败条目会写入状态文件并带有分类原因，例如 `http_404`、`network_error`、`invalid_or_oversized_pdf`。
 
 ## PDF 解析与 OCR
@@ -165,6 +167,8 @@ llm:
 ```
 
 总结校验会检查 15 个必需章节、未替换占位符、JSON 输出、代码块围栏和模板禁止句。
+
+总结阶段默认也是幂等的：如果 `data/summaries/{key}.md` 已存在且通过模板校验，就不会再次调用 LLM；只有显式加 `--force` 或现有 summary 校验失败时才会重跑。
 
 ## 验证与报告
 

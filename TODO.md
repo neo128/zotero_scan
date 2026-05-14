@@ -76,6 +76,11 @@
   - 增加 `--retry-failed`、`--only-missing`、`--keys-file` 或按状态筛选。
   - 验收：大批量持续导入时可以只处理新增/缺失/失败条目。
 
+- [x] PDF 下载和 AI 总结必须默认幂等，避免重复执行昂贵操作。
+  - PDF 已存在且通过 `%PDF` 头校验时，`download_pdfs.py` 默认不得重新下载；只有显式 `--force` 才允许覆盖。
+  - Markdown summary 已存在且通过模板结构校验时，`summarize_papers.py` 默认不得重新调用 LLM；只有显式 `--force` 或 summary 校验失败时才重跑。
+  - 验收：重复运行同一批 key 时，已有 PDF 和有效 summary 的文件修改时间不变化，并在 status 中标记为已有产物复用。
+
 ## P1 - 开发体验与可维护性
 
 - [x] 引入统一 CLI 入口。
