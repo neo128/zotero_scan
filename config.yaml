@@ -1,0 +1,54 @@
+# Minimal runnable configuration for zotero-paper-pipeline.
+
+zotero:
+  # file: read a Zotero/Better BibTeX/CSL JSON or JSONL export.
+  # zotero_api: fetch from Zotero Web API using ZOTERO_API_KEY.
+  source: file
+  input_path: data/zotero_export.json
+
+  # Used only when source is zotero_api.
+  library_type: user
+  library_id: ""
+  collection_key: ""
+  api_key_env: ZOTERO_API_KEY
+  api_base_url: https://api.zotero.org
+  page_size: 100
+
+export:
+  include_raw_zotero: true
+
+paths:
+  metadata_jsonl: data/metadata.jsonl
+  metadata_dir: data/metadata
+  pdf_dir: data/pdfs
+  text_dir: data/text
+  summary_dir: data/summaries
+  status_dir: data/status
+  download_status_jsonl: data/download_status.jsonl
+  parse_status_jsonl: data/parse_status.jsonl
+  summary_status_jsonl: data/summary_status.jsonl
+
+download:
+  timeout_seconds: 45
+  max_pdf_mb: 150
+  derived_link_limit: 6
+
+parse:
+  timeout_seconds: 90
+  max_pages: 0
+  max_text_chars: 0
+  min_text_chars: 100
+
+llm:
+  # mock makes the pipeline runnable without credentials.
+  # Use openai_compatible to call an OpenAI-compatible Chat Completions API.
+  provider: mock
+  api_key_env: OPENAI_API_KEY
+  base_url: https://api.openai.com/v1
+  model: ""
+  temperature: 0.1
+  response_format_json: true
+  max_input_chars: 60000
+  max_output_tokens: 1200
+  timeout_seconds: 120
+
