@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import re
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -15,6 +16,7 @@ from typing import Any
 from pipeline_utils import (
     REQUIRED_METADATA_FIELDS,
     cfg_get,
+    cfg_path,
     compact_text,
     die,
     index_by_key,
@@ -27,6 +29,7 @@ from pipeline_utils import (
     read_json,
     read_jsonl,
     read_metadata_records,
+    retry_call,
     safe_key,
     write_json,
     write_jsonl,
@@ -82,10 +85,42 @@ def fetch_zotero_api(config: dict[str, Any]) -> list[dict[str, Any]]:
     collection_key = str(cfg_get(config, "zotero.collection_key", "") or "").strip()
     collection_part = f"/collections/{urllib.parse.quote(collection_key)}/items" if collection_key else "/items"
     base_url = str(cfg_get(config, "zotero.api_base_url", "https://api.zotero.org")).rstrip("/")
+    timeout = int(cfg_get(config, "zotero.timeout_seconds", 60) or 60)
+    attempts = int(cfg_get(config, "retry.max_attempts", 1) or 1)
+    initial_delay = float(cfg_get(config, "retry.initial_delay_seconds", 1) or 1)
+    max_delay = float(cfg_get(config, "retry.max_delay_seconds", 30) or 30)
 
     limit = int(cfg_get(config, "zotero.page_size", 100))
     start = 0
     items: list[dict[str, Any]] = []
+    total_results: int | None = None
+
+    def fetch_json(url: str) -> tuple[list[dict[str, Any]], int | None]:
+        def request_once() -> tuple[list[dict[str, Any]], int | None]:
+            request = urllib.request.Request(
+                url,
+                headers={
+                    "Zotero-API-Key": api_key,
+                    "Zotero-API-Version": "3",
+                    "User-Agent": "zotero-paper-pipeline/0.2",
+                },
+            )
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                page = json.loads(response.read().decode("utf-8"))
+                total_header = response.headers.get("Total-Results")
+            if not isinstance(page, list):
+                raise ValueError("unexpected Zotero API response; expected a list")
+            total = int(total_header) if total_header and total_header.isdigit() else None
+            return [item for item in page if isinstance(item, dict)], total
+
+        return retry_call(
+            request_once,
+            attempts=attempts,
+            initial_delay=initial_delay,
+            max_delay=max_delay,
+            retry_exceptions=(urllib.error.URLError, TimeoutError, ValueError),
+        )
+
     while True:
         query = urllib.parse.urlencode(
             {
@@ -96,22 +131,38 @@ def fetch_zotero_api(config: dict[str, Any]) -> list[dict[str, Any]]:
             }
         )
         url = f"{base_url}/{segment}/{urllib.parse.quote(library_id)}{collection_part}?{query}"
-        request = urllib.request.Request(
-            url,
-            headers={
-                "Zotero-API-Key": api_key,
-                "Zotero-API-Version": "3",
-                "User-Agent": "zotero-paper-pipeline/0.1",
-            },
-        )
-        with urllib.request.urlopen(request, timeout=60) as response:
-            page = json.loads(response.read().decode("utf-8"))
-        if not isinstance(page, list):
-            raise ValueError("unexpected Zotero API response; expected a list")
-        items.extend(item for item in page if isinstance(item, dict))
-        if len(page) < limit:
+        page, total = fetch_json(url)
+        if total is not None:
+            total_results = total
+        items.extend(page)
+        start += len(page)
+        if len(page) < limit or (total_results is not None and start >= total_results):
             break
-        start += limit
+
+    if bool(cfg_get(config, "zotero.fetch_child_attachments", True)):
+        seen = {compact_text(item_data(item).get("key") or item.get("key")) for item in items}
+        parent_keys = [
+            compact_text(item_data(item).get("key") or item.get("key"))
+            for item in items
+            if compact_text(item_data(item).get("itemType")) != "attachment"
+        ]
+        for parent_key in parent_keys:
+            if not parent_key:
+                continue
+            child_query = urllib.parse.urlencode({"format": "json", "include": "data", "limit": limit})
+            child_url = (
+                f"{base_url}/{segment}/{urllib.parse.quote(library_id)}/items/"
+                f"{urllib.parse.quote(parent_key)}/children?{child_query}"
+            )
+            try:
+                children, _total = fetch_json(child_url)
+            except Exception:
+                continue
+            for child in children:
+                child_key = compact_text(item_data(child).get("key") or child.get("key"))
+                if child_key and child_key not in seen:
+                    seen.add(child_key)
+                    items.append(child)
     return items
 
 
@@ -139,7 +190,7 @@ def extract_citation_key(record: dict[str, Any]) -> str:
 
 def extract_authors(record: dict[str, Any]) -> list[str]:
     authors = value_from(record, "authors", "author")
-    if isinstance(authors, str):
+    if isinstance(authors, str) and compact_text(authors):
         return [compact_text(part) for part in re.split(r"\s+and\s+|;", authors) if compact_text(part)]
     if isinstance(authors, list) and authors and all(isinstance(item, str) for item in authors):
         return [compact_text(item) for item in authors if compact_text(item)]
@@ -308,7 +359,7 @@ def load_items(config: dict[str, Any], source_override: str | None) -> list[dict
         return load_source_file(source_override)
     source = str(cfg_get(config, "zotero.source", "file")).strip().lower()
     if source == "file":
-        input_path = cfg_get(config, "zotero.input_path", "data/zotero_export.json")
+        input_path = cfg_path(config, "zotero.input_path", "data/zotero_export.json")
         return load_source_file(input_path)
     if source in {"api", "zotero_api"}:
         return fetch_zotero_api(config)

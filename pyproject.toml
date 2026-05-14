@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zotero-paper-pipeline"
+version = "0.2.0"
+description = "A Zotero PDF pipeline for metadata export, PDF download, parsing, and template-compliant AI summaries."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "pypdf>=4.0.0",
+  "PyYAML>=6.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "ruff>=0.4.0",
+]
+
+[project.scripts]
+zotero-scan = "zotero_scan.cli:main"
+
+[tool.setuptools]
+packages = ["zotero_scan"]
+py-modules = [
+  "download_pdfs",
+  "export_zotero",
+  "parse_pdfs",
+  "pipeline_utils",
+  "report_pipeline",
+  "summarize_papers",
+  "validate_mapping",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

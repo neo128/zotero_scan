@@ -9,20 +9,19 @@ from pathlib import Path
 from typing import Any
 
 from pipeline_utils import (
-    SUMMARY_FIELDS,
     index_by_key,
     load_config,
     metadata_jsonl,
     metadata_path,
     pdf_dir,
     pdf_path,
-    read_json,
     read_jsonl,
     safe_key,
     status_jsonl,
     summary_dir,
     summary_path,
 )
+from summarize_papers import validate_summary_markdown
 
 
 def valid_pdf(path: Path) -> bool:
@@ -35,14 +34,14 @@ def valid_pdf(path: Path) -> bool:
         return False
 
 
-def summary_missing_fields(path: Path) -> list[str]:
+def summary_validation_errors(path: Path) -> list[str]:
     if not path.exists():
-        return SUMMARY_FIELDS[:]
+        return ["missing summary markdown"]
     try:
-        data = read_json(path)
+        data = path.read_text(encoding="utf-8")
     except Exception:
-        return SUMMARY_FIELDS[:]
-    return [field for field in SUMMARY_FIELDS if field not in data]
+        return ["summary markdown is unreadable"]
+    return validate_summary_markdown(data)
 
 
 def read_status(config: dict[str, Any], stage: str) -> list[dict[str, Any]]:
@@ -88,36 +87,56 @@ def validate(config: dict[str, Any]) -> dict[str, Any]:
     invalid_pdfs: list[str] = []
     missing_summaries: list[str] = []
     invalid_summaries: dict[str, list[str]] = {}
+    invalid_status_transitions: dict[str, list[str]] = {}
 
     for key in keys:
         safe_key(key)
-        if not metadata_path(config, key).exists():
+        if not metadata_path(config, key, create=False).exists():
             missing_metadata_files.append(key)
 
-        pdf = pdf_path(config, key)
+        pdf = pdf_path(config, key, create=False)
         if not pdf.exists():
             missing_pdfs.append(key)
         elif not valid_pdf(pdf):
             invalid_pdfs.append(key)
 
-        summary = summary_path(config, key)
+        summary = summary_path(config, key, create=False)
         if not summary.exists():
             missing_summaries.append(key)
         else:
-            missing = summary_missing_fields(summary)
-            if missing:
-                invalid_summaries[key] = missing
+            errors = summary_validation_errors(summary)
+            if errors:
+                invalid_summaries[key] = errors
 
     download_rows = read_status(config, "download")
     summary_rows = read_status(config, "summary")
     parse_rows = read_status(config, "parse")
+    status_by_stage = {
+        "download": {str(row.get("zotero_item_key", "")): row for row in download_rows},
+        "parse": {str(row.get("zotero_item_key", "")): row for row in parse_rows},
+        "summary": {str(row.get("zotero_item_key", "")): row for row in summary_rows},
+    }
+    for key in keys:
+        issues: list[str] = []
+        download_status = str(status_by_stage["download"].get(key, {}).get("status", ""))
+        parse_status = str(status_by_stage["parse"].get(key, {}).get("status", ""))
+        summary_status = str(status_by_stage["summary"].get(key, {}).get("status", ""))
+        if parse_status == "parsed" and download_status not in {"", "pdf_downloaded"}:
+            issues.append("parse status is parsed but download status is not pdf_downloaded")
+        if summary_status == "summarized" and parse_status not in {"", "parsed"}:
+            issues.append("summary status is summarized but parse status is not parsed")
+        if issues:
+            invalid_status_transitions[key] = issues
+
+    pdf_directory = pdf_dir(config, create=False)
+    summary_directory = summary_dir(config, create=False)
 
     report = {
         "counts": {
             "metadata_rows": len(metadata_rows),
             "unique_metadata_keys": len(keys),
-            "pdf_files": len(list(pdf_dir(config).glob("*.pdf"))) if pdf_dir(config).exists() else 0,
-            "summary_files": len(list(summary_dir(config).glob("*.json"))) if summary_dir(config).exists() else 0,
+            "pdf_files": len(list(pdf_directory.glob("*.pdf"))) if pdf_directory.exists() else 0,
+            "summary_files": len(list(summary_directory.glob("*.md"))) if summary_directory.exists() else 0,
         },
         "duplicates": sorted(set(duplicates)),
         "missing_metadata": sorted(missing_metadata_files),
@@ -128,8 +147,9 @@ def validate(config: dict[str, Any]) -> dict[str, Any]:
         "download_failed": keyed_status_failures(download_rows, "download"),
         "parse_failed": keyed_status_failures(parse_rows, "parse"),
         "summary_failed": keyed_status_failures(summary_rows, "summarize"),
-        "orphan_pdf": orphan_keys(pdf_dir(config), ".pdf", set(keys)),
-        "orphan_summary": orphan_keys(summary_dir(config), ".json", set(keys)),
+        "invalid_status_transition": invalid_status_transitions,
+        "orphan_pdf": orphan_keys(pdf_directory, ".pdf", set(keys)),
+        "orphan_summary": orphan_keys(summary_directory, ".md", set(keys)),
     }
     issue_count = 0
     for name, value in report.items():
@@ -171,4 +191,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -3,16 +3,17 @@
 zotero:
   # file: read a Zotero/Better BibTeX/CSL JSON or JSONL export.
   # zotero_api: fetch from Zotero Web API using ZOTERO_API_KEY.
-  source: file
+  source: zotero_api
   input_path: data/zotero_export.json
 
   # Used only when source is zotero_api.
   library_type: user
-  library_id: ""
+  library_id: "17507734"
   collection_key: ""
   api_key_env: ZOTERO_API_KEY
   api_base_url: https://api.zotero.org
   page_size: 100
+  fetch_child_attachments: false
 
 export:
   include_raw_zotero: true
@@ -27,17 +28,23 @@ paths:
   download_status_jsonl: data/download_status.jsonl
   parse_status_jsonl: data/parse_status.jsonl
   summary_status_jsonl: data/summary_status.jsonl
+  report_markdown: data/report.md
+  report_json: data/report.json
+  manifest_json: data/manifest.json
 
 download:
   timeout_seconds: 45
   max_pdf_mb: 150
   derived_link_limit: 6
+  unpaywall_email: ""
 
 parse:
   timeout_seconds: 90
   max_pages: 0
   max_text_chars: 0
   min_text_chars: 100
+  ocr_enabled: false
+  ocr_language: eng
 
 llm:
   # mock makes the pipeline runnable without credentials.
@@ -47,8 +54,18 @@ llm:
   base_url: https://api.openai.com/v1
   model: ""
   temperature: 0.1
-  response_format_json: true
+  prompt_template_path: pdf_summary_prompt_template.md
+  summary_language: 中文
   max_input_chars: 60000
-  max_output_tokens: 1200
+  max_output_tokens: 3000
   timeout_seconds: 120
 
+retry:
+  max_attempts: 2
+  initial_delay_seconds: 1
+  max_delay_seconds: 20
+
+concurrency:
+  download: 1
+  parse: 1
+  summary: 1
